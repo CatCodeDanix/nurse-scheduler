@@ -5,6 +5,10 @@ import {
   CoWorkerPreference,
 } from "./types";
 
+/**
+ * Calculate penalty from violated preferences.
+ * Lower is better; 0 means all soft preferences satisfied.
+ */
 export function calculateFairnessScore(
   schedule: Schedule,
   preferences: Preference[],
@@ -15,7 +19,7 @@ export function calculateFairnessScore(
       penalty += pref.weight;
     }
   }
-  return penalty; // lower is better; 0 means perfect fairness for given prefs
+  return penalty;
 }
 
 function isPreferenceViolated(schedule: Schedule, pref: Preference): boolean {
@@ -51,17 +55,16 @@ function isShiftPatternViolated(
   if (pref.details.maxConsecutiveNights) {
     let count = 0;
     for (const e of entries) {
-      if (e.shiftType === "N") count++;
+      if (e.shiftType === "N" || e.shiftType === "N_R") count++;
       else count = 0;
       if (count > pref.details.maxConsecutiveNights) return true;
     }
   }
 
   if (pref.details.preferredShifts) {
+    const allowed = new Set(pref.details.preferredShifts);
     for (const e of entries) {
-      if (!pref.details.preferredShifts.includes(e.shiftType)) {
-        return true; // a shift outside preference exists
-      }
+      if (!allowed.has(e.shiftType)) return true;
     }
   }
   return false;
@@ -71,26 +74,25 @@ function isCoWorkerViolated(
   schedule: Schedule,
   pref: CoWorkerPreference,
 ): boolean {
-  const byDate = new Map<string, string[]>();
+  const byDate = new Map<string, Set<string>>();
   for (const e of schedule.entries) {
-    const ids = byDate.get(e.date) || [];
-    ids.push(e.personId);
-    byDate.set(e.date, ids);
+    const set = byDate.get(e.date) ?? new Set();
+    set.add(e.personId);
+    byDate.set(e.date, set);
   }
 
-  for (const [, ids] of byDate) {
-    const personWorks = ids.includes(pref.personId);
-    if (!personWorks) continue;
+  for (const [, workingIds] of byDate) {
+    if (!workingIds.has(pref.personId)) continue;
 
     if (pref.details.avoidWith) {
       for (const avoidId of pref.details.avoidWith) {
-        if (ids.includes(avoidId)) return true;
+        if (workingIds.has(avoidId)) return true;
       }
     }
 
     if (pref.details.preferWith) {
       for (const preferId of pref.details.preferWith) {
-        if (!ids.includes(preferId)) return true;
+        if (!workingIds.has(preferId)) return true;
       }
     }
   }

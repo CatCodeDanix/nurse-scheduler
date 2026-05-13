@@ -1,8 +1,10 @@
 import { SchedulingInput, Schedule, Violation, ScheduleEntry } from "./types";
-import { getMonthDates, isDateInExpression, isWeekdayMatch } from "./dateUtils";
-import { validateSchedule } from "./validator";
+import { validateInput } from "./inputValidator";
+import { evaluateRules } from "./ruleEngine";
+import { solveSchedule } from "./solver";
 import { calculateFairnessScore } from "./scoring";
 
+// ---------- Scheduler interface ----------
 export interface SchedulerResult {
   schedule?: Schedule;
   violations: Violation[];
@@ -14,40 +16,41 @@ export interface Scheduler {
   generate(input: SchedulingInput): Promise<SchedulerResult>;
 }
 
+// ---------- Local scheduler (optimal MILP) ----------
 export class LocalScheduler implements Scheduler {
   async generate(input: SchedulingInput): Promise<SchedulerResult> {
-    const dates = getMonthDates(input.year, input.month);
-    const entries: ScheduleEntry[] = [];
-
-    for (const date of dates) {
-      for (const person of input.people) {
-        if (hasRequestOnDate(person.id, date, input.requests)) continue;
-
-        const shiftType =
-          person.assignmentType === "fixed" && person.fixedShiftType
-            ? person.fixedShiftType
-            : "M";
-        entries.push({
-          personId: person.id,
-          date,
-          shiftType,
-          isRelief: false,
-        });
-      }
+    // Pre‑validate input
+    const inputViolations = validateInput(input);
+    if (inputViolations.some((v) => v.severity === "error")) {
+      return { violations: inputViolations, fairnessScore: 0 };
     }
 
-    const schedule: Schedule = {
-      month: input.month,
-      year: input.year,
-      entries,
-    };
-    const violations = validateSchedule(schedule, input.people, input.rules);
-    const fairnessScore = calculateFairnessScore(schedule, input.preferences);
-
-    return { schedule, violations, fairnessScore };
+    try {
+      const schedule = await solveSchedule(input);
+      const violations = evaluateRules(
+        schedule,
+        input.people,
+        input.rules,
+        input.holidays,
+      );
+      const fairnessScore = calculateFairnessScore(schedule, input.preferences);
+      return { schedule, violations, fairnessScore };
+    } catch (err: any) {
+      return {
+        violations: [
+          {
+            ruleName: "solver-error",
+            description: err.message,
+            severity: "error",
+          },
+        ],
+        fairnessScore: 0,
+      };
+    }
   }
 }
 
+// ---------- AI exporter ----------
 export class AIExporter implements Scheduler {
   async generate(input: SchedulingInput): Promise<SchedulerResult> {
     const payload = {
@@ -60,34 +63,19 @@ export class AIExporter implements Scheduler {
       month: input.month,
       year: input.year,
       holidays: input.holidays ?? [],
+      demand: input.demand,
+      reliefRequirements: input.reliefRequirements ?? [],
     };
 
     const prompt = buildMarkdownPrompt(payload);
+    const schema = buildOutputSchema();
 
     return {
       violations: [],
       fairnessScore: 0,
-      exportedData: { json: payload, prompt },
+      exportedData: { json: payload, prompt, schema },
     };
   }
-}
-
-// Helper
-function hasRequestOnDate(
-  personId: string,
-  date: string,
-  requests: SchedulingInput["requests"],
-): boolean {
-  return requests.some((r) => {
-    if (r.personId !== personId) return false;
-    switch (r.type) {
-      case "leave":
-      case "off-day":
-        return isDateInExpression(date, r.dates);
-      case "recurring-off":
-        return isWeekdayMatch(date, r.recurringWeekday);
-    }
-  });
 }
 
 function buildMarkdownPrompt(data: any): string {
@@ -105,6 +93,12 @@ ${data.requests
   })
   .join("\n")}
 
+## Demand per day
+${data.demand.map((d: any) => `- ${d.date}: M:${d.required.M ?? 0} E:${d.required.E ?? 0} N:${d.required.N ?? 0}`).join("\n")}
+
+## Relief requirements
+${data.reliefRequirements.map((r: any) => `- ${r.date}: ${r.baseShiftType} relief to ward ${r.targetWard} (count ${r.count ?? 1})`).join("\n")}
+
 ## Preferences (soft)
 ${data.preferences.map((p: any) => `- ${p.personId}: ${p.type} ${JSON.stringify(p.details)} weight ${p.weight}`).join("\n")}
 
@@ -113,4 +107,22 @@ ${data.rules.map((r: any) => `- ${r.name} (${r.source}): ${JSON.stringify(r.conf
 
 ## Month: ${data.month}/${data.year}
 ## Output format: array of { personId, date (YYYY-MM-DD), shiftType, isRelief, targetWard? }`;
+}
+
+function buildOutputSchema() {
+  return {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        personId: { type: "string" },
+        date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+        shiftType: { type: "string" },
+        isRelief: { type: "boolean" },
+        targetWard: { type: "string" },
+      },
+      required: ["personId", "date", "shiftType", "isRelief"],
+    },
+  };
 }

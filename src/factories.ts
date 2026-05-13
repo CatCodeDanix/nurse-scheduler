@@ -9,12 +9,16 @@ import {
   ShiftPatternPreference,
   CoWorkerPreference,
   Rule,
+  ShiftDemand,
+  BaseShiftType,
+  ReliefRequirement,
 } from "./types";
 
+// ---------- Person ----------
 export function createPerson(
   id: string,
   name: string,
-  role: Role,
+  role: Role = "Nurse",
   assignmentType: "fixed" | "variable" = "variable",
   fixedShiftType?: ShiftType,
   homeWard?: string,
@@ -22,6 +26,7 @@ export function createPerson(
   return { id, name, role, assignmentType, fixedShiftType, homeWard };
 }
 
+// ---------- Requests ----------
 export function createLeaveRequest(
   personId: string,
   dates: DateExpression,
@@ -51,6 +56,7 @@ export function createRecurringOffRequest(
   };
 }
 
+// ---------- Preferences ----------
 export function createShiftPreference(
   personId: string,
   details: ShiftPatternPreference["details"],
@@ -67,10 +73,28 @@ export function createCoWorkerPreference(
   return { type: "co-worker", personId, weight, details };
 }
 
+// ---------- Rules ----------
 export function createRule(
   source: "government" | "hospital",
   name: string,
   config?: any,
 ): Rule {
   return { source, name, config };
+}
+
+// ---------- Demand ----------
+export function createShiftDemand(
+  date: string,
+  required: Record<BaseShiftType, number>,
+): ShiftDemand {
+  return { date, required };
+}
+
+export function createReliefRequirement(
+  date: string,
+  baseShiftType: BaseShiftType,
+  targetWard: string,
+  count = 1,
+): ReliefRequirement {
+  return { date, baseShiftType, targetWard, count };
 }
