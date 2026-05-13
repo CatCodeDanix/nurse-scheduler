@@ -5,6 +5,8 @@ Uses a **MILP (Mixed‑Integer Linear Programming)** engine under the hood and
 supports both **local solving** and **AI‑driven scheduling** via a clean export
 format.
 
+> ⚠️ **Development status** – This library is in early development (v0.1.x). It passes its test suite and works for common scheduling scenarios, but has not yet been validated in production environments. Expect breaking changes before v1.0.0. Testing, feedback, and contributions are very welcome.
+
 ---
 
 ## Features
