@@ -1,4 +1,3 @@
-import GLPK from "glpk.js";
 import {
   SchedulingInput,
   Schedule,
@@ -13,11 +12,20 @@ import {
 import { getMonthDates, isDateInExpression, isWeekdayMatch } from "./dateUtils";
 import { defaultObligatedHours } from "./ruleEngine";
 
+async function loadGLPK(): Promise<any> {
+  if (typeof window !== "undefined") {
+    const mod = await import("glpk.js");
+    return mod.default();
+  }
+  const mod = await import("glpk.js/node");
+  return mod.default();
+}
+
 /**
  * Build and solve the MILP for an optimal schedule.
  */
 export async function solveSchedule(input: SchedulingInput): Promise<Schedule> {
-  const glpk = await GLPK();
+  const glpk = await loadGLPK();
 
   const dates = getMonthDates(input.year, input.month);
   const people = input.people;
@@ -79,6 +87,24 @@ export async function solveSchedule(input: SchedulingInput): Promise<Schedule> {
     }
   }
 
+  // Allow relief shifts for eligible persons (respect off/leave)
+  if (input.reliefRequirements) {
+    for (const rr of input.reliefRequirements) {
+      const shiftType = `${rr.baseShiftType}_R`;
+      const sIdx = allShiftTypes.indexOf(shiftType);
+      if (sIdx === -1) continue;
+      const d = dates.indexOf(rr.date);
+      if (d === -1) continue;
+      for (let p = 0; p < nPeople; p++) {
+        const person = people[p];
+        if (person.homeWard === rr.targetWard) continue;
+        if (hasOffDay(input, person.id, rr.date)) continue;
+        if (hasLeaveRequest(input, person.id, rr.date)) continue;
+        allowedShifts[p][d][sIdx] = true;
+      }
+    }
+  }
+
   // ---------- Build GLPK model ----------
   const constraints: {
     name: string;
@@ -104,6 +130,28 @@ export async function solveSchedule(input: SchedulingInput): Promise<Schedule> {
           vars,
           bnds: { type: glpk.GLP_UP, ub: 1, lb: -Infinity },
         });
+      }
+    }
+  }
+
+  // ---- Constraint 1b: Force leave shift assignment for leave requests ----
+  for (let p = 0; p < nPeople; p++) {
+    for (let d = 0; d < nDates; d++) {
+      if (hasLeaveRequest(input, people[p].id, dates[d])) {
+        const vars: { name: string; coef: number }[] = [];
+        for (let s = 0; s < allShiftTypes.length; s++) {
+          if (allowedShifts[p][d][s]) {
+            vars.push({ name: varName(p, d, s), coef: 1 });
+          }
+        }
+        // Only "L" is allowed, so sum must be 1
+        if (vars.length > 0) {
+          constraints.push({
+            name: `leave_force_p${p}_d${d}`,
+            vars,
+            bnds: { type: glpk.GLP_FX, ub: 1, lb: 1 },
+          });
+        }
       }
     }
   }
@@ -212,6 +260,38 @@ export async function solveSchedule(input: SchedulingInput): Promise<Schedule> {
             vars: [
               ...nightShiftsToday.map((v) => ({ name: v, coef: 1 })),
               ...nightShiftsNext.map((v) => ({ name: v, coef: 1 })),
+            ],
+            bnds: { type: glpk.GLP_UP, ub: 1, lb: -Infinity },
+          });
+        }
+      }
+    }
+  }
+
+  // ---- Constraint 5: Minimum rest after night (hard rule, if present) ----
+  const minRestRule = input.rules.find(
+    (r) => r.name === "min-rest-after-night",
+  );
+  if (minRestRule) {
+    for (let p = 0; p < nPeople; p++) {
+      for (let d = 0; d < nDates - 1; d++) {
+        const nightVars: string[] = [];
+        const nextDayVars: string[] = [];
+        for (let s = 0; s < allShiftTypes.length; s++) {
+          const shift = allShiftTypes[s];
+          if (shift === "N" || shift === "N_R") {
+            if (allowedShifts[p][d][s]) nightVars.push(varName(p, d, s));
+          }
+          if (shift !== "L" && allowedShifts[p][d + 1][s]) {
+            nextDayVars.push(varName(p, d + 1, s));
+          }
+        }
+        if (nightVars.length > 0 && nextDayVars.length > 0) {
+          constraints.push({
+            name: `rest_after_night_p${p}_d${d}`,
+            vars: [
+              ...nightVars.map((v) => ({ name: v, coef: 1 })),
+              ...nextDayVars.map((v) => ({ name: v, coef: 1 })),
             ],
             bnds: { type: glpk.GLP_UP, ub: 1, lb: -Infinity },
           });
@@ -385,9 +465,15 @@ export async function solveSchedule(input: SchedulingInput): Promise<Schedule> {
   });
 
   if (result.result.status !== glpk.GLP_OPT) {
-    throw new Error(
-      `GLPK failed to find optimal solution: status ${result.result.status}`,
-    );
+    let reason = `GLPK solver failed with status ${result.result.status}`;
+    if (result.result.status === glpk.GLP_NOFEAS) {
+      reason =
+        "Infeasible scheduling problem: no solution satisfies all constraints.";
+    } else if (result.result.status === glpk.GLP_UNDEF) {
+      reason =
+        "Solver could not determine a feasible solution (time limit or numeric issues).";
+    }
+    throw new Error(reason);
   }
 
   // Extract solution
