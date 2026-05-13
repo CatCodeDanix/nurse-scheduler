@@ -1,0 +1,43 @@
+{
+  "name": "nurse-scheduler",
+  "version": "1.0.0",
+  "description": "Professional TypeScript library for nursing shift scheduling",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean --minify",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "lint": "eslint src/**/*.ts"
+  },
+  "keywords": [
+    "nursing",
+    "scheduling",
+    "healthcare",
+    "optimization"
+  ],
+  "author": "Danial Abdoli",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "eslint": "^9.0.0"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0"
+  }
+}
