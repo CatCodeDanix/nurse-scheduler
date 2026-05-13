@@ -1,6 +1,6 @@
 {
   "name": "nurse-scheduler",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Professional TypeScript library for nursing shift scheduling – optimal MILP‑based engine",
   "type": "module",
   "main": "./dist/index.cjs",
